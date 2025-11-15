@@ -2,92 +2,95 @@
 
 import sys
 import os
-from anonfile import AnonFile  # using the anonfile Python API wrapper 0
+import requests
 
-def list_files():
-    """
-    Note: Anonfiles API doesn't provide a way to list all files anonymously.
-    This function will just print a message.
-    """
-    print("⚠️ Listing is not supported with Anonfiles anonymous API.")
+# =============== GoFile.io API ===============
+# Upload endpoint: https://upload.gofile.io/uploadFile 1
 
-def upload(file_path):
-    """Upload a file to AnonFiles."""
+def upload(file_path, token=None):
     if not os.path.exists(file_path):
         print("Error: File does not exist:", file_path)
         return
+    url = "https://upload.gofile.io/uploadFile"
+    files = {"file": open(file_path, "rb")}
+    data = {}
+    if token:
+        data["token"] = token
+    resp = requests.post(url, files=files, data=data)
+    result = resp.json()
+    if result["status"]:
+        file_id = result["data"]["fileId"]
+        download_page = result["data"]["downloadPage"]
+        print("Uploaded! File ID:", file_id)
+        print("Download page:", download_page)
+    else:
+        print("Upload failed:", result)
 
-    anon = AnonFile()
-    result = anon.upload(file_path, progressbar=True)
-    url = result.url.geturl()
-    print("Uploaded successfully! URL:", url)
+def download(file_id, target=None):
+    # We need to get a direct link from GoFile content API
+    api = f"https://api.gofile.io/getContent?contentId={file_id}"
+    resp = requests.get(api)
+    result = resp.json()
+    if not result["status"]:
+        print("Error:", result)
+        return
+    # Pick the first direct link
+    links = result["data"]["directLinkList"]
+    if not links:
+        print("No download link found.")
+        return
+    link = links[0]
+    if not target:
+        target = link.split("/")[-1]
+    dl = requests.get(link, stream=True)
+    with open(target, "wb") as f:
+        for chunk in dl.iter_content(chunk_size=8192):
+            f.write(chunk)
+    print("Downloaded to:", target)
 
-def download(link, target=None):
-    """Download a file from AnonFiles link."""
-    anon = AnonFile()
-    # If target directory is given, download there else current directory
-    out = anon.download(link, path=target)  # default path = cwd 1
-    print("Downloaded to:", out.file_path)
-
-def delete(link):
-    """
-    AnonFiles anonymous API does NOT support deletion via API.  
-    This function will just print a message.
-    """
-    print("⚠️ Delete is not supported via AnonFiles anonymous API.")
-
-def share(file_path):
-    """
-    For AnonFiles, share link is the same as upload's returned URL.
-    So just call upload.
-    """
-    upload(file_path)
+def delete(content_id, token):
+    # Delete only works if you have a token and the content belongs to you
+    api = "https://api.gofile.io/contents"
+    headers = {"Content-Type": "application/json"}
+    data = {
+        "contentsId": content_id
+    }
+    if token:
+        data["token"] = token
+    resp = requests.delete(api, json=data, headers=headers)
+    result = resp.json()
+    print("Delete response:", result)
 
 def usage():
     print("Usage: twd <command> [args]")
     print("Commands:")
-    print("  list")
-    print("  upload <file_path>")
-    print("  download <url> [target_folder]")
-    print("  share <file_path>")
-    print("  delete <url>")
+    print("  upload <file_path> [token]")
+    print("  download <file_id> [target]")
+    print("  delete <content_id> <token>")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         usage()
         sys.exit(1)
-
     cmd = sys.argv[1]
-
-    if cmd == "list":
-        list_files()
-    elif cmd == "upload":
-        if len(sys.argv) < 3:
-            print("Error: Provide a file to upload.")
-            usage()
-        else:
-            upload(sys.argv[2])
+    if cmd == "upload":
+        fp = sys.argv[2]
+        tok = None
+        if len(sys.argv) == 4:
+            tok = sys.argv[3]
+        upload(fp, tok)
     elif cmd == "download":
-        if len(sys.argv) < 3:
-            print("Error: Provide the URL to download.")
-            usage()
-        else:
-            target = None
-            if len(sys.argv) == 4:
-                target = sys.argv[3]
-            download(sys.argv[2], target)
-    elif cmd == "share":
-        if len(sys.argv) < 3:
-            print("Error: Provide the file to share.")
-            usage()
-        else:
-            share(sys.argv[2])
+        file_id = sys.argv[2]
+        target = None
+        if len(sys.argv) == 4:
+            target = sys.argv[3]
+        download(file_id, target)
     elif cmd == "delete":
-        if len(sys.argv) < 3:
-            print("Error: Provide the URL to delete.")
-            usage()
-        else:
-            delete(sys.argv[2])
+        content_id = sys.argv[2]
+        if len(sys.argv) < 4:
+            print("Token required to delete")
+            sys.exit(1)
+        tok = sys.argv[3]
+        delete(content_id, tok)
     else:
-        print("Unknown command:", cmd)
         usage()
